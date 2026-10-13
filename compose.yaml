@@ -1,0 +1,96 @@
+name: manager-library
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-library}
+      POSTGRES_USER: ${POSTGRES_USER:-library}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [library]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      additional_contexts:
+        api_source: ${API_PATH:-../test-manager-library-3145556-api}
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:?Set APP_KEY in .env}
+      APP_URL: ${API_URL:-http://localhost:8000}
+      APP_TIMEZONE: UTC
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_DATABASE: ${POSTGRES_DB:-library}
+      DB_USERNAME: ${POSTGRES_USER:-library}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DB_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      COVERS_DIR: /var/lib/library/covers
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      SESSION_DRIVER: file
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+      LOG_CHANNEL: stderr
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - covers:/var/lib/library/covers
+    networks: [library]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, php, -r, "exit(@file_get_contents('http://127.0.0.1:8000/health') === false ? 1 : 0);"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    init: true
+    command: [sh, /infra/frontend-entrypoint.sh]
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - type: bind
+        source: ${FRONTEND_PATH:-../test-manager-library-3145556-app}
+        target: /app
+        read_only: true
+        bind:
+          create_host_path: false
+      - frontend_dependencies:/app/node_modules
+      - ./docker/frontend/entrypoint.sh:/infra/frontend-entrypoint.sh:ro
+    networks: [library]
+    depends_on:
+      api:
+        condition: service_started
+
+networks:
+  library:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  covers:
+  frontend_dependencies:
